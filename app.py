@@ -1,5 +1,6 @@
 import sys
 import cv2
+import math
 import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, 
@@ -15,8 +16,9 @@ class PlanesDetectionApp(QMainWindow):
         super().__init__()
 
         # Установка заголовка и размеров окна
-        self.setWindowTitle("Распознавание самолётов")
-        self.setGeometry(100, 100, 400, 300)
+        self.setWindowTitle("Детекция и классификация фишек")
+        self.setGeometry(50, 50, 400, 300)
+        self.active = "None"
 
         # Создание виджетов и кнопок для интерфейса
         self.image_label = QLabel(self)
@@ -24,34 +26,35 @@ class PlanesDetectionApp(QMainWindow):
 
         self.select_button = QPushButton("Загрузить с компьютера", self)
         self.reset_button = QPushButton("Сбросить преобразования", self)
-        self.process_image_button = QPushButton("Применить бинаризацию", self)
-        self.erode_button = QPushButton("Применить эрозию", self)
-        self.dilate_button = QPushButton("Применить дилатацию", self)
-        self.open_button = QPushButton("Применить открытие", self)
-        self.close_button = QPushButton("Применить замыкание", self)
-        self.add_circles_button = QPushButton("Выделить и посчитать самолёты", self)
 
-        self.area_input = QLineEdit(self)
-        self.area_input.setPlaceholderText("Введите минимальный размер самолета (пикс.)")
-        self.open_kernel_size_input = QLineEdit(self)
-        self.close_kernel_size_input = QLineEdit(self)
-        self.dilate_kernel_size_input = QLineEdit(self)
-        self.erose_kernel_size_input = QLineEdit(self)
-        for input_field in (self.open_kernel_size_input, self.close_kernel_size_input, self.erose_kernel_size_input,
-                            self.dilate_kernel_size_input):
-            input_field.setPlaceholderText("Введите размер ядра (одно число)")
+        self.canny_operator_button = QPushButton("Применить оператор Кэнни", self)
+        self.gradient_lower_bound_input = QLineEdit(self)
+        self.gradient_lower_bound_input.setPlaceholderText("Введите нижнее пороговое значение градиента")
+        self.gradient_upper_bound_input = QLineEdit(self)
+        self.gradient_upper_bound_input.setPlaceholderText("Введите верхнее пороговое значение градиента")
+        self.aperture_size_input = QLineEdit(self)
+        self.aperture_size_input.setPlaceholderText("Введите размер диафрагмы фильтра Собеля")
 
-        self.info_button = QPushButton("?", self)
-        self.info_button.setFixedSize(25, 25)
-        self.info_button.setToolTip("При бинаризации используется формула: (brightness > 200 and R < B) or (R + 10 < B)")
-        self.kernel_info_buttons = [QPushButton("?", self) for _ in range(4)]
+        self.hough_transform_button = QPushButton("Применить преобразование Хафа", self)
+        self.votes_lower_bound_input = QLineEdit(self)
+        self.votes_lower_bound_input.setPlaceholderText("Введите нижнее пороговое значение голосов")
+
+        self.detect_figures_button = QPushButton("Выделить фишки", self)
+        #self.min_length_input = QLineEdit(self)
+        #self.min_length_input.setPlaceholderText("Введите минимальную длину прямой линии")
+
+        self.detect_dots_button = QPushButton("Классифицировать фишки", self)
+        #self.min_length_input = QLineEdit(self)
+        #self.min_length_input.setPlaceholderText("Введите минимальную длину прямой линии")
+
+        self.visualize_button = QPushButton("Бонус! Визуализация фишек", self)
 
         # Установка текста и выравнивания для некоторых QLabel
         self.settings_label = QLabel("Выбор изображения", self)
         self.settings_label.setAlignment(Qt.AlignCenter)
         self.process_label = QLabel("Преобразования изображения", self)
         self.process_label.setAlignment(Qt.AlignCenter)
-        self.detection_label = QLabel("Детекция самолётов", self)
+        self.detection_label = QLabel("Детекция и классификация фишек", self)
         self.detection_label.setAlignment(Qt.AlignCenter)
         self.empty_label = QLabel("", self)
         self.empty_label.setAlignment(Qt.AlignCenter)
@@ -60,24 +63,18 @@ class PlanesDetectionApp(QMainWindow):
         layout = QGridLayout()
         layout.addWidget(self.image_label, 0, 2, 30, 1)
         for index, widget in enumerate((self.empty_label, self.settings_label, self.select_button, self.reset_button, self.empty_label, self.process_label,
-                                        self.process_image_button, self.empty_label, self.erode_button, 
-                                        self.erose_kernel_size_input, self.empty_label, self.dilate_button, 
-                                        self.dilate_kernel_size_input, self.empty_label, self.open_button, 
-                                        self.open_kernel_size_input, self.empty_label, self.close_button, self.close_kernel_size_input, 
-                                        self.empty_label, self.detection_label, self.add_circles_button, self.area_input)):
+                                        self.canny_operator_button, self.gradient_lower_bound_input,
+                                        self.gradient_upper_bound_input, self.aperture_size_input, self.empty_label,  
+                                        self.hough_transform_button, self.votes_lower_bound_input,
+                                        self.empty_label, self.detection_label, self.detect_figures_button,
+                                        self.detect_dots_button,
+                                        self.visualize_button)):
             layout.addWidget(widget, index, 0)
-        layout.addWidget(self.info_button, 6, 1)
-        for i, button in enumerate(self.kernel_info_buttons):
-            button.setFixedSize(25, 25)
-            layout.addWidget(button, 8 + i*3, 1)  # Расположение кнопок с информацией о ядре
 
         # Создание центрального виджета и установка его для главного окна
         central_widget = QWidget()
         central_widget.setLayout(layout)
         self.setCentralWidget(central_widget)
-
-        # Установка иконки окна
-        self.setWindowIcon(QIcon('icon.png'))
 
         # Инициализация переменных
         self.image_pixels = None  # Переменная для хранения пикселей изображения
@@ -86,17 +83,10 @@ class PlanesDetectionApp(QMainWindow):
         # Привязка действий к кнопкам
         self.select_button.clicked.connect(self.select_image)
         self.reset_button.clicked.connect(self.reset_image)
-        self.process_image_button.clicked.connect(self.binarize_image)
-        self.erode_button.clicked.connect(self.erode_image)
-        self.dilate_button.clicked.connect(self.dilate_image)
-        self.open_button.clicked.connect(self.open_image)
-        self.close_button.clicked.connect(self.close_image)
-        self.add_circles_button.clicked.connect(self.count_and_highlight_objects)
-        self.info_button.clicked.connect(lambda x: QMessageBox.information(self, "О бинаризации", "При бинаризации используется формула: (R < 150 and G > 150 and B > 150) or (brightness > 200 and R < B) or (R + 10 < B)"))
-        for button in self.kernel_info_buttons:
-            button.setToolTip("В качестве примитива используется квадратное ядро (матрица из единиц)")
-            button.clicked.connect(lambda x: QMessageBox.information(self, "О бинаризации", "В качестве примитива используется квадратное ядро (матрица из единиц)"))
-
+        self.canny_operator_button.clicked.connect(self.apply_canny_operator)
+        self.hough_transform_button.clicked.connect(self.hough)
+        self.detect_figures_button.clicked.connect(self.detect_triangles)
+        self.detect_dots_button.clicked.connect(self.detect_dots)
 
     def select_image(self):
         # Создаем диалоговое окно для выбора изображения
@@ -111,7 +101,7 @@ class PlanesDetectionApp(QMainWindow):
 
             # Создаем QPixmap из выбранного файла и масштабируем его
             pixmap = QPixmap(self.selected_file)
-            pixmap = pixmap.scaled(1400, 1400, Qt.KeepAspectRatio)
+            #pixmap = pixmap.scaled(1400, 1000, Qt.KeepAspectRatio)
 
             # Устанавливаем масштабированный QPixmap в QLabel
             self.image_label.setPixmap(pixmap)
@@ -124,6 +114,7 @@ class PlanesDetectionApp(QMainWindow):
             image = Image.open(self.selected_file)
             # Преобразуем изображение в формат RGB и сохраняем для дальнейшей обработки
             self.image_pixels = image.convert("RGB")
+        self.active = "canny"
 
         
     
@@ -138,7 +129,7 @@ class PlanesDetectionApp(QMainWindow):
 
         # Создаем QPixmap из выбранного файла и масштабируем его
         pixmap = QPixmap(self.selected_file)
-        pixmap = pixmap.scaled(1400, 1400, Qt.KeepAspectRatio)
+        #pixmap = pixmap.scaled(1400, 1000, Qt.KeepAspectRatio)
 
         # Устанавливаем масштабированный QPixmap в QLabel
         self.image_label.setPixmap(pixmap)
@@ -151,263 +142,274 @@ class PlanesDetectionApp(QMainWindow):
         image = Image.open(self.selected_file)
         # Преобразуем изображение в формат RGB и сохраняем для дальнейшей обработки
         self.image_pixels = image.convert("RGB")
+        self.active = "source"
 
-
-    def binarize_image(self):
-        # Проверяем, было ли выбрано изображение
-        if not self.image_pixels:
+    def apply_canny_operator(self):
+        if not self.active == "source":
             QMessageBox.warning(self, "Warning", "Сначала выберите изображение.")
             return
+        gray = cv2.cvtColor(cv2.imread(self.selected_file), cv2.COLOR_BGR2GRAY)
+        gradient_lower_bound = 50 if not self.gradient_lower_bound_input.text() else int(self.gradient_lower_bound_input.text())
+        gradient_upper_bound = 150 if not self.gradient_upper_bound_input.text() else int(self.gradient_upper_bound_input.text())
+        aperture_size = 3 if not self.aperture_size_input.text() else int(self.aperture_size_input.text())
+        self.edges = cv2.Canny(gray, gradient_lower_bound, gradient_upper_bound, apertureSize=aperture_size)
+        cv2.imwrite('edges.bmp', self.edges)
+        pixmap = QPixmap('edges.bmp')
+        self.image_label.setPixmap(pixmap)
+        self.image_label.show()
+        self.active = "canny"
+
+
+    def hough(self):
+        if not self.active == "canny":
+            QMessageBox.warning(self, "Warning", "Сначала примените оператор Кэнни.")
+            return
+        votes_lower_bound = 100 if not self.votes_lower_bound_input.text() else int(self.votes_lower_bound_input.text())
+        lines = cv2.HoughLines(self.edges, 1, np.pi / 180, votes_lower_bound)
+        self.image_with_lines = cv2.imread('edges.bmp')
+        if lines is not None:
+            for rho, theta in lines[:, 0]:
+                a = np.cos(theta)
+                b = np.sin(theta)
+                x0 = a * rho
+                y0 = b * rho
+                x1 = int(x0 + 1000 * (-b))
+                y1 = int(y0 + 1000 * (a))
+                x2 = int(x0 - 1000 * (-b))
+                y2 = int(y0 - 1000 * (a))
+                cv2.line(self.image_with_lines, (x1, y1), (x2, y2), (0, 0, 255), 1)
+        cv2.imwrite('lines.jpg', self.image_with_lines)
+        pixmap = QPixmap('lines.jpg')
+        self.image_label.setPixmap(pixmap)
+        self.lines = lines
+        self.image_label.show()
+        self.active = "hough"
+    
+    def detect_triangles(self):
+        if not self.active == "hough":
+            QMessageBox.warning(self, "Warning", "Сначала примените преобразование Хафа.")
+            return
+        self.image_with_edges = cv2.imread('edges.bmp')
+        min_line_length = 40
+        source_image = cv2.imread(self.selected_file)
+        norm = np.zeros_like(source_image)
+        source_image = cv2.normalize(source_image,  norm, 0, 255, cv2.NORM_MINMAX)
+        source_image = norm
         
-        width, height = self.image_pixels.size
-        # Проходим по каждому пикселю изображения
-        for x in range(width):
-            for y in range(height):
-                r, g, b = self.image_pixels.getpixel((x, y))
-                # Вычисляем яркость пикселя по формуле
-                brightness = int(0.299 * r + 0.587 * g + 0.114 * b)
-                # Проверяем условия для бинаризации пикселя
-                if brightness > 200 and r < b or r + 10 < b:
-                    # Если пиксель удовлетворяет условиям, делаем его белым
-                    self.image_pixels.putpixel((x, y), (255, 255, 255))
+        lines_counts = []
+        triangles_centers = []
+        triangles_squares = []
+        triangles_dots = []
+        for rho, theta in self.lines[:, 0]:
+                a = np.cos(theta)
+                b = np.sin(theta)
+                x0 = a * rho
+                y0 = b * rho
+                x1 = x0 + 1000 * (-b)
+                y1 = y0 + 1000 * (a)
+                x2 = x0 - 1000 * (-b)
+                y2 = y0 - 1000 * (a)
+                #print((x1, y1), (x2, y2))
+                count = 0
+                best_count = 0
+                for i in range(1, 999):
+                    xi = x1 + (x2 - x1) / 1000 * i
+                    yi = y1 + (y2 - y1) / 1000 * i
+                    if 0 < yi < self.image_with_edges.shape[0] - 1 and \
+                       0 < xi < self.image_with_edges.shape[1] - 1:
+                        #print(int(xi), int(yi))
+                        summ = 0
+                        for i1 in (-1, 0, 1):
+                            for i2 in (-1, 0, 1):
+                                summ += np.sum(self.image_with_edges[int(yi)+i1][int(xi) + i2])
+                        if summ > 700:
+                            #print(int(xi), int(yi), summ)
+                            count += 1
+                        else:
+                            best_count = max(best_count, count)
+                            if count >= min_line_length:
+                                xmid, ymid = (xi + x_start) / 2, (yi + y_start) / 2
+                                xinner, yinner = xi, y_start
+                                xouter, youter = x_start, yi
+                                norm = (xinner - xmid, yinner - ymid)
+                                xinner, yinner = xinner - norm[0] * 0.8, yinner - norm[1] * 0.8
+                                norm = (xouter - xmid, youter - ymid)
+                                xouter, youter = xouter - norm[0] * 0.8, youter - norm[1] * 0.8
+                                brightness_inner = np.sum(source_image[int(yinner)][int(xinner)] * [0.299, 0.587, 0.114])
+                                brightness_outer = np.sum(source_image[int(youter)][int(xouter)] * [0.299, 0.587, 0.114])
+                                if brightness_inner > brightness_outer:
+                                    xinner, xouter = xouter, xinner
+                                    yinner, youter = youter, yinner
+                                #cv2.circle(source_image, (int(xinner), int(yinner)), radius=3, color=(255, 0, 0), thickness=-1)
+                                if yinner < ymid:
+                                    pt3 = self.find_third_point((x_start, y_start), (xi, yi), -90)
+                                else:
+                                    pt3 = self.find_third_point((x_start, y_start), (xi, yi), 90)
+                                if self.image_with_edges.shape[1] > pt3[0] >= 0 and self.image_with_edges.shape[0] > pt3[1] >= 0:
+
+                                    #print([(int(x_start), int(y_start)), (int(xi), int(yi)), pt3])
+                                    triangle_center = np.array(((int(x_start) + int(xi) + pt3[0]) // 3, (int(y_start) + int(yi) + pt3[1]) // 3))
+                                    a = np.linalg.norm((x_start - xi, y_start - yi))
+                                    for i in range(len(triangles_centers)):
+                                        if np.linalg.norm(triangles_centers[i] - triangle_center) < 50:
+                                            if triangles_squares[i] < 3 ** 0.5 * a ** 2 / 4:
+                                                triangles_centers[i] = triangle_center.copy()
+                                                triangles_squares[i] = 3 ** 0.5 * a ** 2 / 4
+                                                triangles_dots[i] = ((x_start, y_start), (xi, yi), pt3)
+                                            break
+                                    else:
+                                        triangles_centers.append(triangle_center)
+                                        triangles_squares.append(3 ** 0.5 * a ** 2 / 4)
+                                        triangles_dots.append(((x_start, y_start), (xi, yi), pt3))
+                                            
+                                    
+                            count = 0
+                            x_start, y_start = xi, yi
+                lines_counts.append(best_count)
+
+        for i in range(len(triangles_dots)):
+            x_start, y_start = triangles_dots[i][0]
+            xi, yi = triangles_dots[i][1]
+            pt3 = triangles_dots[i][2]
+            cv2.line(source_image, (int(x_start), int(y_start)), (int(xi), int(yi)), (0, 255, 255), 2)
+            cv2.line(source_image, (int(xi), int(yi)), pt3, (0, 255, 255), 2)
+            cv2.line(source_image, pt3, (int(x_start), int(y_start)), (0, 255, 255), 2)
+            cv2.circle(source_image, triangles_centers[i], radius=5, color=(255, 255, 0), thickness=-1)
+        self.triangles = triangles_dots
+        self.centers = triangles_centers
+
+        cv2.imwrite('lines.jpg', source_image)
+        pixmap = QPixmap('lines.jpg')
+        self.image_label.setPixmap(pixmap)
+        self.image_label.show()
+        print(lines_counts)
+
+    def area(self, x1, y1, x2, y2, x3, y3):
+        return abs((x1 * (y2 - y3) + x2 * (y3 - y1) 
+                + x3 * (y1 - y2)) / 2.0)
+ 
+    def isInside(self, x1, y1, x2, y2, x3, y3, x, y):
+    
+        # Calculate area of triangle ABC
+        A = self.area(x1, y1, x2, y2, x3, y3)
+    
+        # Calculate area of triangle PBC 
+        A1 = self.area(x, y, x2, y2, x3, y3)
+        
+        # Calculate area of triangle PAC 
+        A2 = self.area(x1, y1, x, y, x3, y3)
+        
+        # Calculate area of triangle PAB 
+        A3 = self.area(x1, y1, x2, y2, x, y)
+        
+        # Check if sum of A1, A2 and A3 
+        # is same as A
+        if(A == A1 + A2 + A3):
+            return True
+        else:
+            return False
+    
+    def detect_dots(self):
+        if not self.active == "hough":
+            QMessageBox.warning(self, "Warning", "Сначала выделите фишки.")
+            return
+        gray = cv2.cvtColor(cv2.imread(self.selected_file), cv2.COLOR_BGR2GRAY)
+        img = cv2.imread(self.selected_file)
+        triangles_colors = [[0 for i in range(5)] for j in range(len(self.triangles))]
+        for x in range(img.shape[1]):
+            for y in range(img.shape[0]):
+                for i in range(len(self.triangles)):
+                    x_start, y_start = self.triangles[i][0]
+                    xi, yi = self.triangles[i][1]
+                    pt3 = self.triangles[i][2]
+                    if self.isInside(int(x_start), int(y_start), int(xi), int(yi), int(pt3[0]), int(pt3[1]), x, y):
+                        brightness = img[y][x][2] * 0.299 + img[y][x][1] * 0.587 + img[y][x][0] * 0.114
+                        is_white = brightness > 150 or (brightness > 130 and img[y][x][2] / img[y][x][1] < 1.4 and img[y][x][1] / img[y][x][0] < 1.4 and img[y][x][0] / img[y][x][1] < 1.4 and img[y][x][0] / img[y][x][2] < 1.4)
+                        is_green = img[y][x][1] > img[y][x][0] and img[y][x][1] + 5 > img[y][x][2] and 20 < brightness < 80
+                        is_yellow_1 = img[y][x][0] < 40 and img[y][x][2] > 130 and img[y][x][1] > 80
+                        is_yellow_2 = img[y][x][2] > 7 * img[y][x][0] and img[y][x][1] > 50
+                        is_blue = img[y][x][0] > img[y][x][1] + 5 and img[y][x][0] > img[y][x][2] and brightness > 40
+                        is_red = img[y][x][2] > 2.7 * img[y][x][1]
+                        if prev_border:
+                            img[y][x] = (46, 67, 105)
+                            if not (is_white or is_green or is_yellow_1 or is_yellow_2 or is_blue or is_red):
+                                prev_border = False
+                        elif is_white: # white
+                            triangles_colors[i][0] += 1
+                            img[y][x] = (255, 255, 255)
+                        elif is_green: # green
+                            triangles_colors[i][1] += 1
+                            img[y][x] = (0, 255, 0)
+                        elif is_yellow_1 or is_yellow_2: # yellow
+                            triangles_colors[i][2] += 1
+                            img[y][x] = (0, 255, 255)
+                        elif is_blue: # blue
+                            triangles_colors[i][3] += 1
+                            img[y][x] = (255, 0, 0)
+                        elif is_red: # red
+                            triangles_colors[i][4] += 1
+                            img[y][x] = (0, 0, 255)
+                        else:
+                            img[y][x] = (46, 67, 105)
+                        break
                 else:
-                    # Иначе делаем пиксель черным
-                    self.image_pixels.putpixel((x, y), (0, 0, 0))
-
-        # Обновляем изображение в QLabel после бинаризации
-        image_data = self.image_pixels.tobytes("raw", "RGB")
-        q_image = QImage(image_data, width, height, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(q_image).scaled(1400, 1400, Qt.KeepAspectRatio)
+                    img[y][x] = (0, 0 ,0)
+                    gray[y][x] = 0
+                    prev_border = True
+        corners_dots = [[[0 for i in range(5)] for j in range(3)] for k in range(len(self.triangles))]
+        for x in range(1, img.shape[1] - 1):
+            for y in range(1, img.shape[0] - 1):
+                if not (img[y][x][0] == 46 and img[y][x][1] == 67 and img[y][x][0] == 105) and sum(img[y][x]) != 0:
+                    inner = True
+                    for i in range(-2, 3):
+                        for j in range(-2, 3):
+                            if sum(img[y + i][x + j]) == 0:
+                                img[y][x] = (46, 67, 105)
+                                inner = False
+                    if inner:
+                        dists = np.array([np.linalg.norm(np.array(self.triangles[i // 3][i % 3]) - np.array([x, y])) for i in range(3 * len(self.triangles))])
+                        closest = np.argsort(dists)[0]
+                        if img[y][x][0] == 255 and img[y][x][1] == 255 and img[y][x][2] == 255:
+                            corners_dots[closest // 3][closest % 3][0] += 1
+                        elif img[y][x][0] == 0 and img[y][x][1] == 255 and img[y][x][2] == 0:
+                            corners_dots[closest // 3][closest % 3][1] += 1
+                        elif img[y][x][0] == 0 and img[y][x][1] == 255 and img[y][x][2] == 255:
+                            corners_dots[closest // 3][closest % 3][2] += 1
+                        elif img[y][x][0] == 255 and img[y][x][1] == 0 and img[y][x][2] == 0:
+                            corners_dots[closest // 3][closest % 3][3] += 1
+                        elif img[y][x][0] == 0 and img[y][x][1] == 0 and img[y][x][2] == 255:
+                            corners_dots[closest // 3][closest % 3][4] += 1
+                            
+        triangles_colors[i][0] /= 22
+        triangles_colors[i][1] /= 44
+        triangles_colors[i][2] /= 66
+        triangles_colors[i][3] /= 88
+        triangles_colors[i][4] /= 35 * 5
+        for i in range(len(self.triangles)):
+            print(self.centers[i], triangles_colors[i])
+        cv2.imwrite('lines.bmp', img)
+        pixmap = QPixmap('lines.bmp')
         self.image_label.setPixmap(pixmap)
-        # Устанавливаем флаг бинаризации в True
-        self.binary = True
+        print(corners_dots)
+        with open('results.txt', 'w') as file:
+            for i in np.argsort(np.array(self.centers)[:, 0]):
+                file.write(f'{self.centers[i][0]},{self.centers[i][1]}; {np.argmax(corners_dots[i][0]) + 1 if corners_dots[i][0][np.argmax(corners_dots[i][0])] > 7 else 0}, {np.argmax(corners_dots[i][1]) + 1 if corners_dots[i][1][np.argmax(corners_dots[i][1])] > 7 else 0}, {np.argmax(corners_dots[i][2]) + 1 if corners_dots[i][2][np.argmax(corners_dots[i][2])] > 7 else 0}\n')
+        self.image_label.show()
 
-
-    def erode_image(self):
-        # Проверяем, было ли выбрано изображение
-        if not self.image_pixels:
-            QMessageBox.warning(self, "Warning", "Сначала выберите изображение.")
-            return
+    def find_third_point(self, p1, p2, bal):
+        # Находим расстояние между двумя известными точками
+        dist = math.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
         
-        # Проверяем, была ли выполнена бинаризация
-        if not self.binary:
-            QMessageBox.warning(self, "Warning", "Сначала примените бинаризацию.")
-            return
+        # Находим координаты третьей точки
+        # Для правильного треугольника высота равна половине стороны, а основание - сторона треугольника
+        height = dist * math.sqrt(3) / 2
+        midpoint_x = (p1[0] + p2[0]) / 2
+        midpoint_y = (p1[1] + p2[1]) / 2
+        angle = math.atan2(p2[1] - p1[1], p2[0] - p1[0]) + math.radians(bal)  # угол поворота на 60 градусов
+        third_x = midpoint_x + height * math.cos(angle)
+        third_y = midpoint_y + height * math.sin(angle)
         
-        # Получаем изображение из QLabel и конвертируем его в формат RGB888
-        image = self.image_label.pixmap().toImage()
-        image = image.convertToFormat(QImage.Format_RGB888)
-        width, height = image.width(), image.height()
-        ptr = image.bits()
-        ptr.setsize(image.byteCount())
-        arr = np.array(ptr).reshape(height, width, 3)  # Преобразование изображения в массив numpy
-
-        # Конвертируем изображение в оттенки серого для использования с OpenCV
-        gray_image = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-
-        # Получаем размер ядра для эрозии из пользовательского ввода или устанавливаем по умолчанию
-        kernel_size = 3 if not self.erose_kernel_size_input.text() else int(self.erose_kernel_size_input.text())
-        kernel = np.ones((kernel_size, kernel_size), np.uint8)
-
-        # Применяем эрозию с помощью OpenCV
-        eroded_image = cv2.erode(gray_image, kernel, iterations=1)
-
-        # Преобразуем результат эрозии в QImage и отображаем в QLabel
-        q_image = QImage(eroded_image, width, height, QImage.Format_Grayscale8)
-        pixmap = QPixmap.fromImage(q_image)
-        self.image_label.setPixmap(pixmap)
-
-
-    def dilate_image(self):
-        # Проверяем, было ли выбрано изображение
-        if not self.image_pixels:
-            QMessageBox.warning(self, "Warning", "Сначала выберите изображение.")
-            return
-        
-        # Проверяем, была ли выполнена бинаризация
-        if not self.binary:
-            QMessageBox.warning(self, "Warning", "Сначала примените бинаризацию.")
-            return
-        
-        # Получаем изображение из QLabel и конвертируем его в формат RGB888
-        image = self.image_label.pixmap().toImage()
-        image = image.convertToFormat(QImage.Format_RGB888)
-        width, height = image.width(), image.height()
-        ptr = image.bits()
-        ptr.setsize(image.byteCount())
-        arr = np.array(ptr).reshape(height, width, 3)  # Преобразование изображения в массив numpy
-
-        # Конвертируем изображение в оттенки серого для использования с OpenCV
-        gray_image = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-
-        # Создаем ядро для дилатации (2x2 квадратное ядро)
-        kernel = np.ones((2, 2), np.uint8)
-
-        # Применяем дилатацию с помощью OpenCV
-        dilated_image = cv2.dilate(gray_image, kernel, iterations=1)
-
-        # Преобразуем результат дилатации в QImage и отображаем в QLabel
-        q_image = QImage(dilated_image, width, height, QImage.Format_Grayscale8)
-        pixmap = QPixmap.fromImage(q_image)
-        self.image_label.setPixmap(pixmap)
-
-    
-    def open_image(self):
-        # Проверяем, было ли выбрано изображение
-        if not self.image_pixels:
-            QMessageBox.warning(self, "Warning", "Сначала выберите изображение.")
-            return
-        
-        # Проверяем, была ли выполнена бинаризация
-        if not self.binary:
-            QMessageBox.warning(self, "Warning", "Сначала примените бинаризацию.")
-            return
-        
-        # Получаем изображение из QLabel и конвертируем его в формат RGB888
-        image = self.image_label.pixmap().toImage()
-        image = image.convertToFormat(QImage.Format_RGB888)
-        width, height = image.width(), image.height()
-        ptr = image.bits()
-        ptr.setsize(image.byteCount())
-        arr = np.array(ptr).reshape(height, width, 3)  # Преобразование изображения в массив numpy
-
-        # Конвертируем изображение в оттенки серого для использования с OpenCV
-        gray_image = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-
-        # Получаем размер ядра для операции открытия из пользовательского ввода или устанавливаем по умолчанию
-        kernel_size = 3 if not self.open_kernel_size_input.text() else int(self.open_kernel_size_input.text())
-        kernel = np.ones((kernel_size, kernel_size), np.uint8)
-
-        # Применяем операцию открытия с помощью OpenCV
-        opened_image = cv2.morphologyEx(gray_image, cv2.MORPH_OPEN, kernel)
-
-        # Преобразуем результат операции открытия в QImage и отображаем в QLabel
-        q_image = QImage(opened_image, width, height, QImage.Format_Grayscale8)
-        pixmap = QPixmap.fromImage(q_image)
-        self.image_label.setPixmap(pixmap)
-
-    
-    def close_image(self):
-        # Проверяем, было ли выбрано изображение
-        if not self.image_pixels:
-            QMessageBox.warning(self, "Warning", "Сначала выберите изображение.")
-            return
-        
-        # Проверяем, была ли выполнена бинаризация
-        if not self.binary:
-            QMessageBox.warning(self, "Warning", "Сначала примените бинаризацию.")
-            return
-        
-        # Получаем изображение из QLabel и конвертируем его в формат RGB888
-        image = self.image_label.pixmap().toImage()
-        image = image.convertToFormat(QImage.Format_RGB888)
-        width, height = image.width(), image.height()
-        ptr = image.bits()
-        ptr.setsize(image.byteCount())
-        arr = np.array(ptr).reshape(height, width, 3)  # Преобразование изображения в массив numpy
-
-        # Конвертируем изображение в оттенки серого для использования с OpenCV
-        gray_image = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-
-        # Получаем размер ядра для операции закрытия из пользовательского ввода или устанавливаем по умолчанию
-        kernel_size = 4 if not self.close_kernel_size_input.text() else int(self.close_kernel_size_input.text())
-        kernel = np.ones((kernel_size, kernel_size), np.uint8)
-
-        # Применяем операцию закрытия с помощью OpenCV
-        closed_image = cv2.morphologyEx(gray_image, cv2.MORPH_CLOSE, kernel)
-
-        # Преобразуем результат операции закрытия в QImage и отображаем в QLabel
-        q_image = QImage(closed_image, width, height, QImage.Format_Grayscale8)
-        pixmap = QPixmap.fromImage(q_image)
-        self.image_label.setPixmap(pixmap)
-
-        # Закрываем все окна OpenCV
-        cv2.destroyAllWindows()
-
-    
-    def find_connected_components(self):
-        image = self.image_label.pixmap().toImage()
-        image = image.convertToFormat(QImage.Format_Grayscale8)
-        width, height = image.width(), image.height()
-        ptr = image.bits()
-        ptr.setsize(image.byteCount())
-        binary_image = np.array(ptr).reshape(height, width, 1)  # Преобразование изображения в массив numpy
-        # Выполняем выделение связных компонент
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_image, connectivity=8)
-
-        # Формируем список для хранения информации о компонентах
-        components_info = []
-
-        # Проходим по каждой метке связной компоненты (начинаем с 1, так как 0 - фон)
-        for label in range(1, num_labels):
-            # Извлекаем статистику для компоненты
-            left = stats[label, cv2.CC_STAT_LEFT]
-            top = stats[label, cv2.CC_STAT_TOP]
-            width = stats[label, cv2.CC_STAT_WIDTH]
-            height = stats[label, cv2.CC_STAT_HEIGHT]
-            area = stats[label, cv2.CC_STAT_AREA]
-            centroid_x, centroid_y = centroids[label]
-
-            # Создаем маску для текущей компоненты
-            mask = np.zeros_like(binary_image)
-            mask[labels == label] = 255
-
-            # Добавляем информацию о компоненте в список
-            component_info = {
-                'label': label,
-                'left': left,
-                'top': top,
-                'width': width,
-                'height': height,
-                'area': area,
-                'centroid': (centroid_x, centroid_y),
-                'mask': mask
-            }
-            components_info.append(component_info)
-        
-        return components_info
-
-
-    def count_and_highlight_objects(self):
-        # Проверяем, было ли выбрано изображение
-        if not self.image_pixels:
-            QMessageBox.warning(self, "Warning", "Сначала выберите изображение.")
-            return
-        
-        # Проверяем, была ли выполнена бинаризация
-        if not self.binary:
-            QMessageBox.warning(self, "Warning", "Сначала примените бинаризацию.")
-            return
-
-        # Получаем связные компоненты
-        self.connected_components = self.find_connected_components()
-
-        # Создаем QPainter для рисования на изображении в QLabel
-        painter = QPainter(self.image_label.pixmap())
-        pen = QPen(Qt.red)
-        pen.setWidth(2)
-        painter.setPen(pen)
-
-        # Счетчик для подсчета обнаруженных объектов
-        counter = 0
-        # Задаем порог для площади объектов (из пользовательского ввода или устанавливаем по умолчанию)
-        limit = 10 if not self.area_input.text() else int(self.area_input.text())
-        
-        # Проходим по каждой связной компоненте
-        for elem in self.connected_components:
-            if elem['area'] > limit:
-                # Рисуем прямоугольник вокруг объекта
-                painter.drawRect(elem['left'], elem['top'], elem['width'], elem['height'])
-                counter += 1
-
-        # Завершаем рисование
-        painter.end()
-
-        # Обновляем изображение в QLabel
-        self.image_label.setPixmap(self.image_label.pixmap().copy())
-
-        # Выводим информационное сообщение с количеством обнаруженных объектов
-        QMessageBox.information(self, "Результат детекции", f"Самолетов обнаружено: {counter}")
+        return (int(third_x), int(third_y))
 
 
 if __name__ == "__main__":
